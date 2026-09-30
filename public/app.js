@@ -1,6 +1,7 @@
 /* All dates use local time; date-only keys must never be parsed as UTC. */
 const STORAGE_KEY = 'weekbox.tasks.v1';
 const weekElement = document.querySelector('#week');
+const storageNotice = document.querySelector('#storage-message');
 const dateKey = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 function monday(date) {
   const result = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 12);
@@ -16,13 +17,20 @@ let selectedWeek = monday(new Date());
 let tasks = {};
 let storageReadable = true;
 function storageWarning(message) {
-  const notice = document.querySelector('#storage-message');
-  notice.textContent = message;
-  notice.hidden = false;
+  storageNotice.textContent = message;
+  storageNotice.hidden = false;
+}
+function isTask(task) {
+  return task && typeof task.id === 'string' && typeof task.text === 'string' && typeof task.done === 'boolean';
+}
+function isTaskStore(value) {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    && Object.entries(value).every(([key, list]) =>
+      /^\d{4}-\d{2}-\d{2}$/.test(key) && Array.isArray(list) && list.every(isTask));
 }
 try {
   const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
-  if (!stored || typeof stored !== 'object' || Array.isArray(stored) || !Object.entries(stored).every(([key, list]) => /^\d{4}-\d{2}-\d{2}$/.test(key) && Array.isArray(list) && list.every(task => task && typeof task.id === 'string' && typeof task.text === 'string' && typeof task.done === 'boolean'))) throw new Error('Invalid saved data');
+  if (!isTaskStore(stored)) throw new Error('Invalid saved data');
   tasks = stored;
 } catch {
   storageReadable = false;
@@ -32,7 +40,7 @@ function save() {
   if (!storageReadable) return;
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
-    document.querySelector('#storage-message').hidden = true;
+    storageNotice.hidden = true;
   } catch {
     storageWarning('Your browser could not save these changes. Keep this tab open to avoid losing them.');
   }
@@ -74,18 +82,14 @@ function edit(key, task, target) {
       row.querySelector('input').setAttribute('aria-label', `Mark ${task.text} complete`);
       row.querySelector('.delete').setAttribute('aria-label', `Delete ${task.text}`);
     }
-    // Only replace this card's task list: other buttons must survive blur so
+    // Keep existing rows intact: other buttons must survive blur so
     // the click that ended the edit can still reach its intended target.
     const liveCard = document.getElementById(`day-${key}`);
     const oldList = liveCard.querySelector('.tasks');
     if (!task && !cancel && text) {
-      const temporary = document.createElement('ul');
-      renderTasks(temporary, key);
-      oldList.append(temporary.lastElementChild);
+      oldList.append(createTaskRow(key, tasks[key].at(-1)));
     }
-    const card = document.getElementById(`day-${key}`);
-    const restored = task ? Array.from(card.querySelectorAll('.task-text')).find(el => el.dataset.id === task.id) : card.querySelector('.add');
-    if (document.activeElement === document.body) restored?.focus({ preventScroll: true });
+    if (document.activeElement === document.body) target.focus({ preventScroll: true });
   }
   input.addEventListener('blur', () => finish());
   input.addEventListener('keydown', event => {
@@ -131,31 +135,30 @@ function render() {
   }
 }
 function renderTasks(list, key) {
-    list.replaceChildren();
-    for (const task of tasks[key] || []) {
-      const row = document.createElement('li');
-      row.className = `task${task.done ? ' completed' : ''}`;
-      const checkbox = document.createElement('input');
-      checkbox.type = 'checkbox';
-      checkbox.checked = task.done;
-      checkbox.setAttribute('aria-label', `Mark ${task.text} complete`);
-      checkbox.addEventListener('change', () => {
-        task.done = checkbox.checked;
-        row.classList.toggle('completed', task.done);
-        save();
-      });
-      const text = button(task.text, 'task-text', `Edit ${task.text}`, () => edit(key, task, text));
-      text.dataset.id = task.id;
-      const remove = button('×', 'delete', `Delete ${task.text}`, () => {
-        tasks[key] = tasks[key].filter(item => item.id !== task.id);
-        if (!tasks[key].length) delete tasks[key];
-        save();
-        render();
-        document.getElementById(`day-${key}`).querySelector('.add').focus({ preventScroll: true });
-      });
-      row.append(checkbox, text, remove);
-      list.append(row);
-    }
+  list.replaceChildren(...(tasks[key] || []).map(task => createTaskRow(key, task)));
+}
+function createTaskRow(key, task) {
+  const row = document.createElement('li');
+  row.className = `task${task.done ? ' completed' : ''}`;
+  const checkbox = document.createElement('input');
+  checkbox.type = 'checkbox';
+  checkbox.checked = task.done;
+  checkbox.setAttribute('aria-label', `Mark ${task.text} complete`);
+  checkbox.addEventListener('change', () => {
+    task.done = checkbox.checked;
+    row.classList.toggle('completed', task.done);
+    save();
+  });
+  const text = button(task.text, 'task-text', `Edit ${task.text}`, () => edit(key, task, text));
+  const remove = button('×', 'delete', `Delete ${task.text}`, () => {
+    tasks[key] = tasks[key].filter(item => item.id !== task.id);
+    if (!tasks[key].length) delete tasks[key];
+    save();
+    row.remove();
+    document.getElementById(`day-${key}`).querySelector('.add').focus({ preventScroll: true });
+  });
+  row.append(checkbox, text, remove);
+  return row;
 }
 document.querySelector('#previous').addEventListener('click', () => { selectedWeek = offset(selectedWeek, -7); render(); });
 document.querySelector('#next').addEventListener('click', () => { selectedWeek = offset(selectedWeek, 7); render(); });
